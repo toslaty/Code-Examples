@@ -1,0 +1,70 @@
+- name: Debian Provisioning
+  hosts: test
+  become: yes
+  remote_user: root
+  vars_prompt:
+    - name: username
+      prompt: Please supply a username!
+      private: no
+
+    - name: password
+      prompt: Please supply a password for the user! Password not shown while typing
+
+    - name: ssh_port
+      prompt: Please specify the SSH-Port you want to use in the future
+
+  tasks:
+    - name: Update repo list
+      apt: update_cache=yes cache_valid_time=3600
+
+    - name: Upgrade all packages
+      apt: upgrade=yes
+
+    - name: create new user with sudo privs
+      user:
+        name: "{{ username }}"
+        groups: sudo
+        uid: 1001
+        password: "{{ password | password_hash('sha512') }}"
+        state: present
+
+    - name: disable root login and change SSH-Port to given port
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      loop:
+        - { regexp: "^PermitRootLogin", line: "PermitRootLogin no" }
+        - { regexp: "^Port", line: "Port {{ ssh_port }}" }
+
+    - name: install iptables
+      apt:
+        name: iptables
+        state: latest
+
+    - name: install fail2ban
+      apt:
+        name: fail2ban
+        state: latest
+
+    - name: fail2ban configuration(users wont be able to login after 3 failed auths over 10H adn are then banned for 10D)
+      lineinfile:
+        path: /etc/fail2ban/fail2ban.conf
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line  }}"
+      loop:
+        - { regexp: "^maxretry", line: "maxretry 3" }
+        - { regexp: "^bantime", line: "bantime 6300m" }
+        - { regexp: "^findtime", line: "findtime 600m" }
+
+    - name: start fail2ban and enable fail2ban when server restart
+      service:
+        name: fail2ban
+        state: started
+        enabled: yes
+
+    - name: Restart SSH beacuse of RootLogin change
+      ansible.builtin.service:
+        name: sshd
+        state: restarted
+        enabled: yes
